@@ -1,0 +1,7 @@
+# Netlify auto-detects Next.js and installs its runtime adapter, so no plugin
+# is declared here. Node is pinned because Next.js 16 needs a recent version.
+[build]
+  command = "npm run build"
+
+[build.environment]
+  NODE_VERSION = "22"
