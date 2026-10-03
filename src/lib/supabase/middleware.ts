@@ -3,6 +3,14 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login", "/auth/callback"];
 
+// Remembers "this user already has a profile row" so the middleware doesn't
+// re-query the database on every single request. It's only a hint to skip a
+// redundant check — it holds the user's own id and nothing sensitive, and a
+// forged value could at worst skip the onboarding redirect for someone who
+// then can't save anything anyway (every write has a foreign key to the
+// profile row), so it grants no access to anything.
+const ONBOARDED_COOKIE = "vpc_onboarded";
+
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
@@ -34,10 +42,18 @@ export async function updateSession(request: NextRequest) {
   const isRootPath = pathname === "/";
   const isOnboardingPath = pathname === "/onboarding";
 
+  // Redirects must carry any cookies Supabase just refreshed on
+  // supabaseResponse, or a token refresh is silently dropped on redirect.
+  const redirectTo = (pathname: string) => {
+    const url = request.nextUrl.clone();
+    url.pathname = pathname;
+    const response = NextResponse.redirect(url);
+    supabaseResponse.cookies.getAll().forEach((c) => response.cookies.set(c));
+    return response;
+  };
+
   if (!user && !isPublicPath && !isRootPath) {
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = "/login";
-    return NextResponse.redirect(loginUrl);
+    return redirectTo("/login");
   }
 
   // Enforce onboarding completion for every protected path, not just the
@@ -50,22 +66,29 @@ export async function updateSession(request: NextRequest) {
   // check is the single place that can't be bypassed by a bookmark, a
   // closed onboarding tab, or a different entry path.
   if (user && !isPublicPath && !isRootPath) {
-    const { data: profile } = await supabase
-      .from("users")
-      .select("id")
-      .eq("id", user.id)
-      .maybeSingle();
+    let hasProfile = request.cookies.get(ONBOARDED_COOKIE)?.value === user.id;
 
-    if (!profile && !isOnboardingPath) {
-      const onboardingUrl = request.nextUrl.clone();
-      onboardingUrl.pathname = "/onboarding";
-      return NextResponse.redirect(onboardingUrl);
+    if (!hasProfile) {
+      const { data: profile } = await supabase
+        .from("users")
+        .select("id")
+        .eq("id", user.id)
+        .maybeSingle();
+      hasProfile = !!profile;
+
+      if (hasProfile) {
+        supabaseResponse.cookies.set(ONBOARDED_COOKIE, user.id, {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: process.env.NODE_ENV === "production",
+          path: "/",
+          maxAge: 60 * 60 * 24 * 30,
+        });
+      }
     }
-    if (profile && isOnboardingPath) {
-      const dashboardUrl = request.nextUrl.clone();
-      dashboardUrl.pathname = "/dashboard";
-      return NextResponse.redirect(dashboardUrl);
-    }
+
+    if (!hasProfile && !isOnboardingPath) return redirectTo("/onboarding");
+    if (hasProfile && isOnboardingPath) return redirectTo("/dashboard");
   }
 
   return supabaseResponse;

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Mic, TrendingUp, Landmark, ArrowRight } from "lucide-react";
+import { Mic, TrendingUp, Landmark, ArrowRight, MailCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { Logo } from "@/components/Logo";
 
@@ -32,25 +32,35 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [confirmationSentTo, setConfirmationSentTo] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
 
-    const result =
-      mode === "login"
-        ? await signInWithPassword(email, password)
-        : await signUpWithPassword(email, password);
+    if (mode === "login") {
+      const result = await signInWithPassword(email, password);
+      setSubmitting(false);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      router.push("/dashboard");
+      return;
+    }
 
+    const result = await signUpWithPassword(email, password);
     setSubmitting(false);
-
     if (result.error) {
       setError(result.error);
       return;
     }
-
-    router.push(mode === "login" ? "/dashboard" : "/onboarding");
+    if (result.needsConfirmation) {
+      setConfirmationSentTo(email);
+      return;
+    }
+    router.push("/onboarding");
   };
 
   return (
@@ -86,6 +96,32 @@ export default function LoginPage() {
           <Logo />
         </div>
 
+        {confirmationSentTo ? (
+          <div className="w-full max-w-sm animate-fade-up text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-600">
+              <MailCheck size={26} />
+            </div>
+            <h1 className="mt-5 font-heading text-2xl font-bold">Check your email</h1>
+            <p className="mt-2 text-sm text-foreground-secondary">
+              We sent a confirmation link to{" "}
+              <span className="font-medium text-foreground">{confirmationSentTo}</span>. Open it to
+              finish creating your account, then come back and log in.
+            </p>
+            <p className="mt-3 text-xs text-foreground-muted">
+              Nothing there after a minute or two? Check your spam folder.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmationSentTo(null);
+                setMode("login");
+              }}
+              className="btn-secondary mt-6"
+            >
+              Back to log in
+            </button>
+          </div>
+        ) : (
         <div className="w-full max-w-sm animate-fade-up">
           <h1 className="font-heading text-2xl font-bold">
             {mode === "login" ? "Welcome back" : "Create your account"}
@@ -153,6 +189,7 @@ export default function LoginPage() {
             </button>
           </form>
         </div>
+        )}
       </div>
     </main>
   );
